@@ -252,6 +252,7 @@ bool FirmwareVersionCheck(void) {
   if (httpCode == HTTP_CODE_OK)  // if version received
   {
     payload.trim();
+    Serial.println(payload);
     fileFW = SD.open("/firmwareVersion.txt", FILE_READ);
     String fwVersion = fileFW.readStringUntil('\n');
     Serial.println(fwVersion);
