@@ -3,11 +3,15 @@
 #include <DS1307RTC.h>
 
 #include <WiFi.h>
+#include <HTTPUpdate.h>
+#include <HTTPClient.h>
+#include <Update.h>
 #include <WiFiClientSecure.h>
 #include <DNSServer.h>
 #include <WebServer.h>
 #include <PubSubClient.h>
 #include <NTPClient.h>
+#include <cert.h>
 
 #include "FS.h"
 #include "SD.h"
@@ -32,18 +36,27 @@ int miso = 2;
 int mosi = 15;
 int cs = 13;
 
+// change interval time for data log in SD card
+#define logInterval 30000  // 30s
+
+
 #define LONG_PRESS_TIME 3000  // Time in milliseconds for a long press (3 seconds)
 
-#define URL_FW_VERSION
-#define URL_FW_BIN "https://raw.githubusercontent.com/CHUOB-VANDY/WQTFrimware/blob/master/build/esp32.esp32.esp32/WQTV2.ino.bin"
+#define URL_FW_VERSION "https://raw.githubusercontent.com/vandychuob/WQTFrimware/master/bin_version.txt"
+#define URL_FW_BIN "https://raw.githubusercontent.com/vandychuob/WQTFrimware/master/WQTV2.ino.bin"
 
+// Define server details and file path
+#define HOST "raw.githubusercontent.com"
+#define PATH "/vandychuob/WQTFrimware/master/WQTV2.ino.bin"
+#define PATHVERSION "vandychuob/WQTFrimware/master/bin_version.txt"
+#define PORT 443
 
-
+String FirmwareVer = {
+  "1.0"
+};
 
 WiFiClient espClient;
 PubSubClient client(espClient);
-
-
 
 char* ssid_AP = "WaterQuality";
 char* password_AP = "@@123456";
@@ -75,7 +88,6 @@ char mqttID[20];
 char mqttTopic[30];
 
 unsigned long lastLogTime = 0;
-const unsigned long logInterval = 1000;  // 3000 ms
 
 volatile bool buttonPressed = false;
 unsigned long buttonPressStartTime = 0;
@@ -87,8 +99,153 @@ TaskHandle_t task3;
 
 // Mutex for SD Card access
 SemaphoreHandle_t sdMutex;
-void firmwareUpdate();
+bool firmwareUpdate();
 bool firmwareVersionCheck();
+
+unsigned long previousMillis = 0;  // will store last time LED was updated
+const long fwUpdateInterval = 6000;
+
+void repeatedFWUpdateCall() {
+  static int num = 0;
+  unsigned long currentMillis = millis();
+  if ((currentMillis - previousMillis) >= fwUpdateInterval) {
+    // save the last time you blinked the LED
+    previousMillis = currentMillis;
+    if (FirmwareVersionCheck()) {
+      // firmwareUpdate();
+    }
+  }
+}
+
+bool firmwareUpdate(void) {
+  WiFiClientSecure httpClient;
+  httpClient.setInsecure();
+  if (!httpClient.connect(HOST, PORT)) {
+    Serial.println("Failed to connect to server");
+    return false;
+  }
+
+  httpClient.printf("GET %s HTTP/1.1\r\nHost: %s\r\n%s\r\nConnection: close\r\n\r\n", PATH, HOST);
+
+  // Wait for headers and extract content length
+  int contentLength = 0;
+  bool isValidContentType = false;
+  String http_response_code = "error";
+
+
+  while (httpClient.connected()) {
+    String line = httpClient.readStringUntil('\n');
+    if (line.startsWith("HTTP/1.1")) {
+      http_response_code = line.substring(9, 12);  // Extract the response code (e.g., "200")
+    }
+    if (line.startsWith("Content-Length: ")) {
+      contentLength = line.substring(16).toInt();
+    }
+    if (line.startsWith("Content-Type: ")) {
+      isValidContentType = line.indexOf("application/octet-stream") >= 0;
+    }
+    if (line == "\r") {
+      break;
+    }
+  }
+  Serial.println("HTTP response code: " + http_response_code);  // Print the HTTP response code
+
+  // Check if the response code is not 200 (OK)
+  if (http_response_code != "200") {
+    Serial.println("Failed to download firmware: HTTP response code " + http_response_code);
+    httpClient.stop();
+    return false;
+  }
+  // Check if the content length is available and content type is valid
+  if (contentLength && isValidContentType) {
+    Serial.printf("Content length: %d\n", contentLength);
+    if (!Update.begin(contentLength)) {  // Start with max available size
+      Serial.println("Not enough space to begin OTA");
+      httpClient.stop();
+      return false;
+    }
+
+    // Stream firmware directly to flash
+    size_t written = Update.writeStream(httpClient);
+    if (written == contentLength) {
+      Serial.println("Written: " + String(written) + " successfully");
+    } else {
+      Serial.println("Written only: " + String(written) + "/" + String(contentLength) + ". Retry?");
+      httpClient.stop();
+      return false;
+    }
+
+    if (Update.end()) {
+      Serial.println("OTA done!");
+      if (Update.isFinished()) {
+        Serial.println("Update successfully completed. Rebooting...");
+        return true;
+      } else {
+        Serial.println("Update not finished? Something went wrong!");
+      }
+    } else {
+      Serial.println("Error Occurred. Error #: " + String(Update.getError()));
+    }
+  } else {
+    Serial.println("Invalid content length or content type");
+  }
+  httpClient.stop();
+  return false;
+}
+
+bool FirmwareVersionCheck(void) {
+ String payload;
+  int httpCode;
+  String fwurl = "";
+  fwurl += URL_FW_VERSION;
+  fwurl += "?";
+  fwurl += String(rand());
+  Serial.println(fwurl);
+  WiFiClientSecure* client = new WiFiClientSecure;
+
+  if (client) 
+  {
+    // client->setCACert(rootCACertificate);
+
+    // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is 
+    HTTPClient https;
+
+    if (https.begin(*client, fwurl)) 
+    { // HTTPS      
+      Serial.print("[HTTPS] GET...\n");
+      // start connection and send HTTP header
+      delay(1000);
+      httpCode = https.GET();
+      delay(1000);
+      if (httpCode == HTTP_CODE_OK) // if version received
+      {
+        payload = https.getString(); // save received version
+        Serial.println("payload :" + payload);
+      } else {
+        Serial.print("error in downloading version file:");
+        Serial.println(httpCode);
+      }
+      https.end();
+    }
+    delete client;
+  }
+      
+  if (httpCode == HTTP_CODE_OK) // if version received
+  {
+    payload.trim();
+    if (payload.equals(FirmwareVer)) {
+      Serial.printf("\nDevice already on latest firmware version:%s\n", FirmwareVer);
+      return 0;
+    } 
+    else 
+    {
+      Serial.println(payload);
+      Serial.println("New firmware detected");
+      return 1;
+    }
+  } 
+  return 0;
+}
 
 void initSPIFFS() {
   if (!SPIFFS.begin(true)) {
@@ -401,17 +558,6 @@ void setupWifi() {
   mqtt_password = readFile(SPIFFS, passwordPath, mqtt_password);
   interval = readFile(SPIFFS, intervalPath, String(interval)).toInt();
 
-  Serial.println(SSID);
-  Serial.println(password);
-  Serial.println(server);
-  Serial.println(port);
-  Serial.println(topic);
-  Serial.println(id);
-  Serial.println(mqtt_user);
-  Serial.println(mqtt_password);
-  Serial.println(interval);
-
-
   if (SSID == "") {
     setupWifiAP();
     while (SSID == "") {
@@ -463,7 +609,7 @@ void setupMqtt() {
   client.setKeepAlive(60);
   // client.setCallback(callback);
   strcpy(mqttTopic, topic.c_str());
-    // Attempt to connect
+  // Attempt to connect
   Serial.println("Attempting MQTT connection...");
   if (client.connect(mqttID, mqtt_user.c_str(), mqtt_password.c_str())) {
     Serial.println("MQTT connected");
@@ -519,7 +665,45 @@ String getSensorData() {
   memcpy(&cod, buf + sizeof(float) * 4, sizeof(float));
   memcpy(&toc, buf + sizeof(float) * 5, sizeof(float));
 
-  String data = "pH:" + String(pH) + "pH, " + "WaterFlow:" + String(waterFlow) + "m3/h, " + "SS:" + String(ss) + "mg/L, " + "COD:" + String(cod) + "mg/L, " + "TOC:" + String(toc) + "mg/L, " + "Temp:" + String(temp) + "°C";
+  // String data = "pH:" + String(pH) + "pH, " + "WaterFlow:" + String(waterFlow) + "m3/h, " + "SS:" + String(ss) + "mg/L, " + "COD:" + String(cod) + "mg/L, " + "TOC:" + String(toc) + "mg/L, " + "Temp:" + String(temp) + "°C";
+  String data = "{\"payload\":{\"id\": \"" + String(mqttID) + "\",\"name\": \"" + id + "\",\"fields\": [ { \"ph\":";
+  if (!isnan(pH)) {
+    data += String(pH);
+  } else {
+    data += "0.00";
+  }
+  data += ",\"temp\":";
+  if (!isnan(temp)) {
+    data += String(temp);
+  } else {
+    data += "0.00";
+  }
+  data += ",\"cod\": ";
+  if (!isnan(cod)) {
+    data += String(cod);
+  } else {
+    data += "0.00";
+  }
+  // data +=",\"TOC\": ";
+  // if(TOCGet != -1){
+  //   data += String(TOCGet);
+  // }
+  // else{
+  //   data += "null";
+  // }
+  data += ",\"ss\": ";
+  if (!isnan(ss)) {
+    data += String(ss);
+  } else {
+    data += "0.00";
+  }
+  data += ",\"waterflow\": ";
+  if (waterFlow != 0) {
+    data += String(waterFlow);
+  } else {
+    data += "0.00";
+  }
+  data += ",\"timestamp\":" + getDateTime() + "}] }}";
 
   return data;
 }
@@ -530,7 +714,7 @@ void logDataToSD() {
   if (Serial1.available() >= sizeof(float) * 6) {
     File file = SD.open("/data.txt", FILE_APPEND);
     if (file) {
-      String data = getDateTime() + " - " + getSensorData();
+      String data = getSensorData();
       file.println(data);
       file.close();
       Serial.println("Logged: " + data);
@@ -545,6 +729,7 @@ void logDataToSD() {
 void TaskLogData(void* pvParameters) {
   while (1) {
     checkResetESP();
+    repeatedFWUpdateCall();
     if (millis() - lastLogTime >= logInterval) {
       lastLogTime = millis();
       logDataToSD();
@@ -574,7 +759,7 @@ void sendDataToMQTT() {
     // Read and send each line of the data
     while (file.available()) {
       String line = file.readStringUntil('\n');
-      
+
       // Try sending each line via MQTT
       if (client.publish(mqttTopic, line.c_str())) {
         Serial.println("Sent: " + line);  // Debugging info
@@ -609,24 +794,24 @@ void sendDataToMQTT() {
 // Task 2: Send data to MQTT if connected
 void TaskSendData(void* pvParameters) {
   for (;;) {
+
     if (WiFi.status() == WL_CONNECTED && client.connected()) {
-        sendDataToMQTT();
+      sendDataToMQTT();
 
     } else {
-        // setupWifi();
-        vTaskDelay(500);
-        Serial.println("MQTT disconnected, retrying...");
-        if (!client.connected()) {
-            for (int retry = 0; retry < 5 && !client.connected(); retry++) {  // Limit retries
-                if (client.connect(mqttID, mqtt_user.c_str(), mqtt_password.c_str())) {
-                    Serial.println("MQTT reconnected.");
-                } else {
-                    Serial.println("MQTT connection failed, retrying...");
-                    vTaskDelay(2000 / portTICK_PERIOD_MS);  // Wait before retrying
-                }
-            }
+      vTaskDelay(500);
+      Serial.println("MQTT disconnected, retrying...");
+      if (!client.connected()) {
+        for (int retry = 0; retry < 5 && !client.connected(); retry++) {  // Limit retries
+          if (client.connect(mqttID, mqtt_user.c_str(), mqtt_password.c_str())) {
+            Serial.println("MQTT reconnected.");
+          } else {
+            Serial.println("MQTT connection failed, retrying...");
+            vTaskDelay(2000 / portTICK_PERIOD_MS);  // Wait before retrying
+          }
         }
-        client.loop();
+      }
+      client.loop();
     }
     vTaskDelay(50 / portTICK_PERIOD_MS);  // Check every 10ms
   }
@@ -664,10 +849,9 @@ void setup() {
   digitalWrite(led1, LOW);
   digitalWrite(led2, LOW);
 
-
   // Setup Reset button pin
   delay(100);
-  pinMode(resetWiFiPin, INPUT);                                             
+  pinMode(resetWiFiPin, INPUT);
   attachInterrupt(digitalPinToInterrupt(resetWiFiPin), handleButtonPress, CHANGE);  // Trigger on both press and release
 
   // Initialize SPIFFS for data saving
