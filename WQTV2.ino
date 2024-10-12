@@ -417,7 +417,7 @@ void setupWifi() {
     while (SSID == "") {
       dnsServer.processNextRequest();
       webServer.handleClient();
-    }4
+    }
   }
   if (SSID != "") {
     if (password != "") {
