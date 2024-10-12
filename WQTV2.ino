@@ -133,6 +133,7 @@ void firmwareUpdate(void) {
     client.print("Host: " + String(HOST) + "\r\n");         // Specify the host
     client.println("Connection: close\r\n");                // Close connection after response
     client.println();                                       // Send an empty line to indicate end of request headers
+    SD.remove("/" + String(FILE_NAME)); // delete firmware file before write new file
 
     File file = SD.open("/" + String(FILE_NAME), FILE_APPEND);  // Open file in SPIFFS for writing
     if (!file) {
@@ -227,7 +228,6 @@ bool FirmwareVersionCheck(void) {
   FirmwareURL += String(rand());
   Serial.println(FirmwareURL);
   WiFiClientSecure* client = new WiFiClientSecure;
-  SD.remove("/" + String(FILE_NAME)); // delete firmware file before write new file
   if (client) {
     client->setCACert(rootCACertificate);
     HTTPClient https;
