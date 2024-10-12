@@ -249,6 +249,7 @@ bool FirmwareVersionCheck(void) {
     String fwVersion = file.readStringUntil('\n');
     Serial.println(fwVersion);
     file.close();
+    delay(100);
     if (payload.equals(fwVersion)) {
       Serial.printf("\nDevice  IS Already on Latest Firmware Version:%s\n", payload);
       return 0;
@@ -884,12 +885,6 @@ void setup() {
   setupMqtt();
   delay(100);
   syncTimeWithNTP();
-
-  delay(100);
-  File file = SD.open("/firmwareVersion.txt", FILE_WRITE);
-  file.println("1.1");
-  file.close();
-  delay(100);
 
 
   // Create a mutex to protect SD card access
