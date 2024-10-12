@@ -200,6 +200,7 @@ void firmwareUpdate(void) {
   // Complete the OTA update process
   if (Update.end()) {
     Serial.println("Successful update");
+    SD.remove("/" + String(FILE_NAME)); // delete firmware file
   } else {
     Serial.println("Error Occurred:" + String(Update.getError()));
     return;
@@ -889,6 +890,9 @@ void setup() {
   delay(100);
   syncTimeWithNTP();
 
+  // remove firmware file before write new firmware
+  delay(100);
+  SD.remove("/" + String(FILE_NAME));
 
   // Create a mutex to protect SD card access
   sdMutex = xSemaphoreCreateMutex();
