@@ -163,7 +163,7 @@ void firmwareUpdate(void) {
       if (client.available()) {
         size_t bytesRead = client.readBytes(buffer, bufferSize);
         file.write(buffer, bytesRead);  // Write data to file
-        delay(30);
+        delay(5);
       }
     }
     file.close();   // Close the file
@@ -886,9 +886,6 @@ void setup() {
   file.close();
   delay(100);
 
-  delay(100);
-  SD.remove("/"+ String(FILE_NAME));
-  delay(100);
 
   // Create a mutex to protect SD card access
   sdMutex = xSemaphoreCreateMutex();
