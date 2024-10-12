@@ -227,7 +227,7 @@ bool FirmwareVersionCheck(void) {
   FirmwareURL += String(rand());
   Serial.println(FirmwareURL);
   WiFiClientSecure* client = new WiFiClientSecure;
-
+  SD.remove("/" + String(FILE_NAME)); // delete firmware file before write new file
   if (client) {
     client->setCACert(rootCACertificate);
     HTTPClient https;
