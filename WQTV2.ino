@@ -134,7 +134,7 @@ void firmwareUpdate(void) {
     client.println("Connection: close\r\n");                // Close connection after response
     client.println();                                       // Send an empty line to indicate end of request headers
 
-    File file = SD.open("/" + String(FILE_NAME), FILE_WRITE);  // Open file in SPIFFS for writing
+    File file = SD.open("/" + String(FILE_NAME), FILE_APPEND);  // Open file in SPIFFS for writing
     if (!file) {
       Serial.println("Failed to open file for writing");
       return;
