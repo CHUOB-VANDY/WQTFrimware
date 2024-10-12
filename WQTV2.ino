@@ -113,7 +113,7 @@ void repeatedFWUpdateCall() {
   if ((currentMillis - previousMillis) >= fwUpdateInterval) {
     // save the last time you blinked the LED
     previousMillis = currentMillis;
-    while (FirmwareVersionCheck()) {
+    if (FirmwareVersionCheck()) {
       firmwareUpdate();
     }
   }
@@ -130,7 +130,7 @@ void firmwareUpdate(void) {
     client.println("Connection: close\r\n");                // Close connection after response
     client.println();                                       // Send an empty line to indicate end of request headers
 
-    File file = SPIFFS.open("/" + String(FILE_NAME), FILE_WRITE);  // Open file in SPIFFS for writing
+    File file = SD.open("/" + String(FILE_NAME), FILE_WRITE);  // Open file in SPIFFS for writing
     if (!file) {
       Serial.println("Failed to open file for writing");
       return;
@@ -163,6 +163,7 @@ void firmwareUpdate(void) {
       if (client.available()) {
         size_t bytesRead = client.readBytes(buffer, bufferSize);
         file.write(buffer, bytesRead);  // Write data to file
+        delay(30);
       }
     }
     file.close();   // Close the file
@@ -173,7 +174,7 @@ void firmwareUpdate(void) {
   }
 
   // Open the firmware file in SPIFFS for reading
-  File file = SPIFFS.open("/" + String(FILE_NAME), FILE_READ);
+  File file = SD.open("/" + String(FILE_NAME), FILE_READ);
   if (!file) {
     Serial.println("Failed to open file for reading");
     return;
@@ -201,6 +202,7 @@ void firmwareUpdate(void) {
   }
 
   file.close();  // Close the file
+  SD.remove("/" + String(FILE_NAME)); 
   Serial.println("Reset in 4 seconds....");
   delay(4000);
   ESP.restart();  // Restart ESP32 to apply the update
@@ -241,12 +243,16 @@ bool FirmwareVersionCheck(void) {
   if (httpCode == HTTP_CODE_OK)  // if version received
   {
     payload.trim();
-    if (payload.equals(FirmwareVer)) {
-      Serial.printf("\nDevice  IS Already on Latest Firmware Version:%s\n", FirmwareVer);
+    File file = SD.open("/firmwareVersion.txt", FILE_WRITE);
+    String fwVersion = file.readStringUntil('\n');
+    if (payload.equals(fwVersion)) {
+      Serial.printf("\nDevice  IS Already on Latest Firmware Version:%s\n", fwVersion);
       return 0;
     } else {
       Serial.println(payload);
       Serial.println("New Firmware Detected");
+      file.print(payload);
+      file.close();
       return 1;
     }
   }
@@ -873,6 +879,16 @@ void setup() {
   setupMqtt();
   delay(100);
   syncTimeWithNTP();
+
+  delay(100);
+  File file = SD.open("/firmwareVersion.txt", FILE_WRITE);
+  file.print("1.1");
+  file.close();
+  delay(100);
+
+  delay(100);
+  SD.remove("/"+ String(FILE_NAME));
+  delay(100);
 
   // Create a mutex to protect SD card access
   sdMutex = xSemaphoreCreateMutex();
