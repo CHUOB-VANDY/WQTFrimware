@@ -112,7 +112,7 @@ void repeatedFWUpdateCall() {
     // save the last time you blinked the LED
     previousMillis = currentMillis;
     if (FirmwareVersionCheck()) {
-      // firmwareUpdate();
+      firmwareUpdate();
     }
   }
 }
@@ -194,56 +194,49 @@ bool firmwareUpdate(void) {
 }
 
 bool FirmwareVersionCheck(void) {
- String payload;
+  String payload;
   int httpCode;
-  String fwurl = "";
-  fwurl += URL_FW_VERSION;
-  fwurl += "?";
-  fwurl += String(rand());
-  Serial.println(fwurl);
+  String FirmwareURL = "";
+  FirmwareURL += URL_FW_VERSION;
+  FirmwareURL += "?";
+  FirmwareURL += String(rand());
+  Serial.println(FirmwareURL);
   WiFiClientSecure* client = new WiFiClientSecure;
 
-  if (client) 
-  {
-    // client->setCACert(rootCACertificate);
-
-    // Add a scoping block for HTTPClient https to make sure it is destroyed before WiFiClientSecure *client is 
+  if (client) {
+    client->setCACert(rootCACertificate);
     HTTPClient https;
 
-    if (https.begin(*client, fwurl)) 
-    { // HTTPS      
+    if (https.begin(FirmwareURL)) {
       Serial.print("[HTTPS] GET...\n");
       // start connection and send HTTP header
-      delay(1000);
+      delay(100);
       httpCode = https.GET();
-      delay(1000);
-      if (httpCode == HTTP_CODE_OK) // if version received
+      delay(100);
+      if (httpCode == HTTP_CODE_OK)  // if version received
       {
-        payload = https.getString(); // save received version
-        Serial.println("payload :" + payload);
+        payload = https.getString();  // save received version
       } else {
-        Serial.print("error in downloading version file:");
+        Serial.print("Error Occured During Version Check: ");
         Serial.println(httpCode);
       }
       https.end();
     }
     delete client;
   }
-      
-  if (httpCode == HTTP_CODE_OK) // if version received
+
+  if (httpCode == HTTP_CODE_OK)  // if version received
   {
     payload.trim();
     if (payload.equals(FirmwareVer)) {
-      Serial.printf("\nDevice already on latest firmware version:%s\n", FirmwareVer);
+      Serial.printf("\nDevice  IS Already on Latest Firmware Version:%s\n", FirmwareVer);
       return 0;
-    } 
-    else 
-    {
+    } else {
       Serial.println(payload);
-      Serial.println("New firmware detected");
+      Serial.println("New Firmware Detected");
       return 1;
     }
-  } 
+  }
   return 0;
 }
 
