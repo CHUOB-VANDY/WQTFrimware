@@ -35,7 +35,7 @@ int cs = 13;
 #define LONG_PRESS_TIME 3000  // Time in milliseconds for a long press (3 seconds)
 
 #define URL_FW_VERSION
-#define URL_FW_BIN
+#define URL_FW_BIN "https://raw.githubusercontent.com/CHUOB-VANDY/WQTFrimware/blob/master/build/esp32.esp32.esp32/WQTV2.ino.bin"
 
 
 
