@@ -57,7 +57,7 @@ String FirmwareVer = {
   "1.0"
 };
 unsigned long previousMillis = 0;  // will store last time LED was updated
-const long fwUpdateInterval = 20000;
+const long fwUpdateInterval = 10000;
 
 
 WiFiClient espClient;
