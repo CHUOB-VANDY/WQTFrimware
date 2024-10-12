@@ -57,7 +57,7 @@ String FirmwareVer = {
   "1.0"
 };
 unsigned long previousMillis = 0;  // will store last time LED was updated
-const long fwUpdateInterval = 10000;
+const long fwUpdateInterval = 30000;
 File fileFW;
 String payload;
 
@@ -206,7 +206,6 @@ void firmwareUpdate(void) {
   }
 
   file.close();  // Close the file
-  SD.remove("/" + String(FILE_NAME));
 
   // save firmware version for later update
   fileFW = SD.open("/firmwareVersion.txt", FILE_WRITE);
