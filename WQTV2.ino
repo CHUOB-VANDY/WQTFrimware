@@ -208,7 +208,7 @@ void firmwareUpdate(void) {
 
   file.close();  // Close the file
   SD.remove("/" + String(FILE_NAME)); // delete firmware file
-  
+
   // save firmware version for later update
   fileFW = SD.open("/firmwareVersion.txt", FILE_WRITE);
   fileFW.print(payload);
@@ -254,6 +254,7 @@ bool FirmwareVersionCheck(void) {
   {
     payload.trim();
     Serial.println(payload);
+    delay(300);
     fileFW = SD.open("/firmwareVersion.txt", FILE_READ);
     String fwVersion = fileFW.readStringUntil('\n');
     Serial.println(fwVersion);
