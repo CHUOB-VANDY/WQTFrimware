@@ -56,6 +56,9 @@ int cs = 13;
 String FirmwareVer = {
   "1.0"
 };
+unsigned long previousMillis = 0;  // will store last time LED was updated
+const long fwUpdateInterval = 20000;
+
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -104,8 +107,7 @@ SemaphoreHandle_t sdMutex;
 void firmwareUpdate();
 bool firmwareVersionCheck();
 
-unsigned long previousMillis = 0;  // will store last time LED was updated
-const long fwUpdateInterval = 6000;
+
 
 void repeatedFWUpdateCall() {
   static int num = 0;
@@ -243,14 +245,17 @@ bool FirmwareVersionCheck(void) {
   if (httpCode == HTTP_CODE_OK)  // if version received
   {
     payload.trim();
-    File file = SD.open("/firmwareVersion.txt", FILE_WRITE);
+    File file = SD.open("/firmwareVersion.txt", FILE_READ);
     String fwVersion = file.readStringUntil('\n');
+    Serial.println(fwVersion);
+    file.close();
     if (payload.equals(fwVersion)) {
-      Serial.printf("\nDevice  IS Already on Latest Firmware Version:%s\n", fwVersion);
+      Serial.printf("\nDevice  IS Already on Latest Firmware Version:%s\n", payload);
       return 0;
     } else {
       Serial.println(payload);
       Serial.println("New Firmware Detected");
+      file = SD.open("/firmwareVersion.txt", FILE_WRITE);
       file.print(payload);
       file.close();
       return 1;
@@ -882,7 +887,7 @@ void setup() {
 
   delay(100);
   File file = SD.open("/firmwareVersion.txt", FILE_WRITE);
-  file.print("1.1");
+  file.println("1.1");
   file.close();
   delay(100);
 
