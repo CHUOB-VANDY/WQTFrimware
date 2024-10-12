@@ -58,6 +58,8 @@ String FirmwareVer = {
 };
 unsigned long previousMillis = 0;  // will store last time LED was updated
 const long fwUpdateInterval = 10000;
+File fileFW;
+String payload;
 
 
 WiFiClient espClient;
@@ -204,14 +206,19 @@ void firmwareUpdate(void) {
   }
 
   file.close();  // Close the file
-  SD.remove("/" + String(FILE_NAME)); 
+  SD.remove("/" + String(FILE_NAME));
+
+  // save firmware version for later update
+  fileFW = SD.open("/firmwareVersion.txt", FILE_WRITE);
+  fileFW.print(payload);
+  fileFW.close();
   Serial.println("Reset in 4 seconds....");
   delay(4000);
   ESP.restart();  // Restart ESP32 to apply the update
 }
 
 bool FirmwareVersionCheck(void) {
-  String payload;
+
   int httpCode;
   String FirmwareURL = "";
   FirmwareURL += URL_FW_VERSION;
@@ -245,10 +252,10 @@ bool FirmwareVersionCheck(void) {
   if (httpCode == HTTP_CODE_OK)  // if version received
   {
     payload.trim();
-    File file = SD.open("/firmwareVersion.txt", FILE_READ);
-    String fwVersion = file.readStringUntil('\n');
+    fileFW = SD.open("/firmwareVersion.txt", FILE_READ);
+    String fwVersion = fileFW.readStringUntil('\n');
     Serial.println(fwVersion);
-    file.close();
+    fileFW.close();
     delay(100);
     if (payload.equals(fwVersion)) {
       Serial.printf("\nDevice  IS Already on Latest Firmware Version:%s\n", payload);
@@ -256,9 +263,6 @@ bool FirmwareVersionCheck(void) {
     } else {
       Serial.println(payload);
       Serial.println("New Firmware Detected");
-      file = SD.open("/firmwareVersion.txt", FILE_WRITE);
-      file.print(payload);
-      file.close();
       return 1;
     }
   }
