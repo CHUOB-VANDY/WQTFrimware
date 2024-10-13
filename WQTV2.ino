@@ -58,7 +58,7 @@ String FirmwareVer = {
   "1.0"
 };
 unsigned long previousMillis = 0;  // will store last time LED was updated
-const long fwUpdateInterval = 30000;
+const long fwUpdateInterval = 300000; // check firmware update every 5 minutes
 File fileFW;
 String payload;
 
@@ -113,10 +113,19 @@ volatile bool buttonPressed = false;
 unsigned long buttonPressStartTime = 0;
 bool longPressDetected = false;
 
+// Status flags
+bool wifiConnected = false;
+bool mqttConnected = false;
+bool configMode = false;
+
+
+// LED state tracking variable
+bool ledState = false;  // false = LED off, true = LED on
+
 TaskHandle_t Task1;
 TaskHandle_t Task2;
 TaskHandle_t task3;
-
+TaskHandle_t task4;
 
 // Mutex for SD Card access
 SemaphoreHandle_t sdMutex;
@@ -540,7 +549,6 @@ void handleSubmit() {
   writeFile(SPIFFS, usernamePath, mqtt_user.c_str());
   writeFile(SPIFFS, passwordPath, mqtt_password.c_str());
   writeFile(SPIFFS, intervalPath, String(interval).c_str());
-  writeFile(SPIFFS, logIntervalPath, String(logInterval).c_str());
 
   WiFi.begin(SSID, password);
   delay(2000);
@@ -572,7 +580,7 @@ void checkResetESP() {
     if (millis() - buttonPressStartTime > LONG_PRESS_TIME && !longPressDetected) {
       longPressDetected = true;
       Serial.println("Resetting ESP32...");
-      delay(100);  // Small delay to ensure serial message is sent
+      vTaskDelay(1500 / portTICK_PERIOD_MS);  // Small delay to ensure serial message is sent
       resetWiFi();
       ESP.restart();
     }
@@ -598,14 +606,26 @@ void setupWifi() {
   interval = readFile(SPIFFS, intervalPath, String(interval)).toInt();
   logInterval = readFile(SPIFFS, logIntervalPath, String(logInterval)).toInt();
 
-  Serial.println("MQTT Message Interval: " + interval);
-  Serial.println("Data Log Interval: " + logInterval);
+  Serial.println("MQTT Message Interval: " + String(interval));
+  Serial.println("Data Log Interval: " + String(logInterval));
 
   if (SSID == "") {
     setupWifiAP();
+    configMode = true;
+    int loopCounter = 0;
     while (SSID == "") {
+      loopCounter++;
       dnsServer.processNextRequest();
       webServer.handleClient();
+      if (configMode) {
+        if (loopCounter == 2) {
+          // Blink every 100ms in configuration mode
+          ledState = !ledState;                       // Toggle LED state
+          digitalWrite(led2, ledState ? HIGH : LOW);  // Set LED
+          loopCounter = 0;
+        }
+      }
+      vTaskDelay(50 / portTICK_PERIOD_MS);
     }
   }
   if (SSID != "") {
@@ -614,31 +634,46 @@ void setupWifi() {
     } else {
       WiFi.begin(SSID);
     }
-    delay(1500);
+    configMode = false;
+    int wifiDetectCounter = 0;
+    vTaskDelay(1500 / portTICK_PERIOD_MS);
     int wifiState = WiFi.status();
     while (wifiState != WL_CONNECTED) {
+      wifiDetectCounter++;
+
       wifiState = WiFi.status();
-      Serial.println("wifi not connected.");
-      delay(1500);
-      if (wifiState == 3) {
-        WiFi.mode(WIFI_STA);
-        break;
+      if (wifiDetectCounter == 20) {
+        wifiDetectCounter = 0;
+        Serial.println("wifi not connected.");
+
+        if (wifiState == 3) {
+          WiFi.mode(WIFI_STA);
+          break;
+        }
+        if (wifiState != 1 && wifiState != 6) {
+          WiFi.reconnect();
+          vTaskDelay(1500 / portTICK_PERIOD_MS);
+        }
       }
-      if (wifiState != 1 && wifiState != 6) {
-        WiFi.reconnect();
-        delay(800);
-      }
+
+      ledState = !ledState;                       // Toggle LED state
+      digitalWrite(led2, ledState ? HIGH : LOW);  // Set LED
+
+
+      vTaskDelay(30 / portTICK_PERIOD_MS);
       // if still can't connect to wifi, reset wifi and restart ESP by press button for 2s
       checkResetESP();
     }
   }
+
   webServer.close();
   WiFi.mode(WIFI_STA);
   WiFi.reconnect();
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    vTaskDelay(1500 / portTICK_PERIOD_MS);
     Serial.print(".");
   }
+  wifiConnected = true;
   Serial.println("");
   Serial.println("WiFi connected");
   Serial.println("IP address: ");
@@ -700,10 +735,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
       Serial.print((char)payload[i]);
       messageTemp += (char)payload[i];
     }
-    if (messageTemp == "ok") {
+    if (messageTemp != " ") {
       String data = "{\"deivceId\": \"" + String(mqttID) + "\",\"interval\": " + messageTemp + "}";
       client.publish(msgConfReplyTopic.c_str(), data.c_str());
-      delay(4000);
+      vTaskDelay(4000 / portTICK_PERIOD_MS);
       ESP.restart();
     }
   }
@@ -723,11 +758,13 @@ void setupMqtt() {
     client.subscribe(msgconfLogInervalTopic.c_str());
     client.subscribe(msgConfReplyTopic.c_str());
     client.subscribe(msgConfEspResetTopic.c_str());
+    mqttConnected = true;
   } else {
     Serial.print("MQTT connection failed, rc=");
     Serial.print(client.state());
     Serial.println(" retrying in 5 seconds");
-    delay(3000);  // Wait before retrying
+    mqttConnected = false;
+    vTaskDelay(3000 / portTICK_PERIOD_MS);  // Wait before retrying
   }
 }
 // reconnect to mqtt
@@ -743,12 +780,14 @@ void reconnectMqtt() {
       client.subscribe(msgconfLogInervalTopic.c_str());
       client.subscribe(msgConfReplyTopic.c_str());
       client.subscribe(msgConfEspResetTopic.c_str());
+      mqttConnected = true;
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
       Serial.println(" try again in 5 seconds");
+      mqttConnected = false;
       // Wait 5 seconds before retrying
-      delay(5000);
+      vTaskDelay(5000 / portTICK_PERIOD_MS);
     }
   }
 }
@@ -955,6 +994,22 @@ void TaskUpdateTime(void* pvParameters) {
   }
 }
 
+// Task to handle LED blinking
+void ledTask(void* parameter) {
+  for (;;) {
+    if (wifiConnected && mqttConnected) {
+      // Blink every 500ms when WiFi and MQTT are connected
+      ledState = !ledState;                       // Toggle LED state
+      digitalWrite(led2, ledState ? HIGH : LOW);  // Set LED
+      vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+    if (wifiConnected == false) {
+      ledState = !ledState;                       // Toggle LED state
+      digitalWrite(led2, ledState ? HIGH : LOW);  // Set LED
+      vTaskDelay(30 / portTICK_PERIOD_MS);
+    }
+  }
+}
 
 void IRAM_ATTR handleButtonPress() {
   // Interrupt is triggered when the button is pressed (active low)
@@ -966,7 +1021,7 @@ void IRAM_ATTR handleButtonPress() {
   }
 }
 void setup() {
-  delay(500);
+  vTaskDelay(500 / portTICK_PERIOD_MS);
   Serial.begin(115200);
   Serial1.setRxBufferSize(4096);
   Serial1.begin(9600, SERIAL_8N1, RXp2, TXp2);
@@ -974,38 +1029,35 @@ void setup() {
   // Setup LED pin
   pinMode(led1, OUTPUT);
   pinMode(led2, OUTPUT);
-  digitalWrite(led1, LOW);
+  digitalWrite(led1, HIGH);
   digitalWrite(led2, LOW);
 
   // Setup Reset button pin
-  delay(100);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
   pinMode(resetWiFiPin, INPUT);
   attachInterrupt(digitalPinToInterrupt(resetWiFiPin), handleButtonPress, CHANGE);  // Trigger on both press and release
 
   // Initialize SPIFFS for data saving
-  delay(100);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
   initSPIFFS();
 
   // Initialize SD card
-  delay(100);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
   SPI.begin(sck, miso, mosi, cs);
   if (!SD.begin(cs)) {
     Serial.println("SD Card mount failed.");
     return;
   }
-  delay(100);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
   WiFi.mode(WIFI_STA);
-  delay(50);
+  vTaskDelay(100 / portTICK_PERIOD_MS);
   strcpy(mqttID, WiFi.macAddress().c_str());
   Serial.println(mqttID);
   setupWifi();
   setupMqtt();
-  delay(100);
+  vTaskDelay(500 / portTICK_PERIOD_MS);
   syncTimeWithNTP();
-
-  // remove firmware file before write new firmware
-  delay(100);
-
+  vTaskDelay(100 / portTICK_PERIOD_MS);
   // Create a mutex to protect SD card access
   sdMutex = xSemaphoreCreateMutex();
 
@@ -1013,6 +1065,7 @@ void setup() {
   xTaskCreatePinnedToCore(TaskLogData, "TaskLogData", 4096, NULL, 1, &Task1, 1);
   xTaskCreatePinnedToCore(TaskSendData, "TaskSendData", 8192, NULL, 1, &Task2, 0);
   xTaskCreatePinnedToCore(TaskUpdateTime, "TaskUpdateTime", 4096, NULL, 1, &task3, 0);
+  xTaskCreatePinnedToCore(ledTask, "ledTask", 4096, NULL, 2, &task4, 0);
 }
 
 void loop() {
