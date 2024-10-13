@@ -968,6 +968,7 @@ void TaskSendData(void* pvParameters) {
   for (;;) {
 
     if (WiFi.status() == WL_CONNECTED && client.connected()) {
+      wifiConnected = true;
       if (millis() - lastMsgInterval >= interval) {
         lastMsgInterval = millis();
         sendDataToMQTT();
@@ -1003,7 +1004,7 @@ void ledTask(void* parameter) {
       digitalWrite(led2, ledState ? HIGH : LOW);  // Set LED
       vTaskDelay(1000 / portTICK_PERIOD_MS);
     }
-    if (wifiConnected == false) {
+    else {
       ledState = !ledState;                       // Toggle LED state
       digitalWrite(led2, ledState ? HIGH : LOW);  // Set LED
       vTaskDelay(30 / portTICK_PERIOD_MS);
@@ -1065,7 +1066,7 @@ void setup() {
   xTaskCreatePinnedToCore(TaskLogData, "TaskLogData", 4096, NULL, 1, &Task1, 1);
   xTaskCreatePinnedToCore(TaskSendData, "TaskSendData", 8192, NULL, 1, &Task2, 0);
   xTaskCreatePinnedToCore(TaskUpdateTime, "TaskUpdateTime", 4096, NULL, 1, &task3, 0);
-  xTaskCreatePinnedToCore(ledTask, "ledTask", 4096, NULL, 2, &task4, 0);
+  xTaskCreatePinnedToCore(ledTask, "ledTask", 4096, NULL, 1, &task4, 1);
 }
 
 void loop() {
