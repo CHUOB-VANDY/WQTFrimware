@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <Wire.h>
 #include <DS1307RTC.h>
 
@@ -38,8 +39,8 @@ int miso = 2;
 int mosi = 15;
 int cs = 13;
 
-// change interval time for data log in SD card
-#define logInterval 30000  // 30s
+
+
 
 
 #define LONG_PRESS_TIME 3000  // Time in milliseconds for a long press (3 seconds)
@@ -86,13 +87,25 @@ const char* idPath = "/id.txt";
 const char* usernamePath = "/username.txt";
 const char* passwordPath = "/password.txt";
 const char* intervalPath = "/interval.txt";
+const char* logIntervalPath = "/loginterval.txt";
 int interval = 30000;
+
+// change interval time for data log in SD card
+long logInterval = 30000;
+long msgInterval = 10000;
+unsigned long lastMsgInterval = 0;
 
 DNSServer dnsServer;
 WebServer webServer(80);
 const byte DNS_PORT = 53;
 char mqttID[20];
 char mqttTopic[30];
+
+String msgConfIntervalTopic = "mqtt/msgInterval";
+String msgconfLogInervalTopic = "mqtt/msgLogInterval";
+String msgConfReplyTopic = "mqtt/msgReply";
+String msgConfEspResetTopic = "mqtt/msgEspReset";
+
 
 unsigned long lastLogTime = 0;
 
@@ -103,6 +116,7 @@ bool longPressDetected = false;
 TaskHandle_t Task1;
 TaskHandle_t Task2;
 TaskHandle_t task3;
+
 
 // Mutex for SD Card access
 SemaphoreHandle_t sdMutex;
@@ -133,9 +147,9 @@ void firmwareUpdate(void) {
     client.print("Host: " + String(HOST) + "\r\n");         // Specify the host
     client.println("Connection: close\r\n");                // Close connection after response
     client.println();                                       // Send an empty line to indicate end of request headers
-    SD.remove("/" + String(FILE_NAME)); // delete firmware file before write new file
+    SD.remove("/" + String(FILE_NAME));                     // delete firmware file before write new file
 
-    File file = SD.open("/" + String(FILE_NAME), FILE_APPEND);  // Open file in SPIFFS for writing
+    File file = SD.open("/" + String(FILE_NAME), FILE_WRITE);  // Open file in SPIFFS for writing
     if (!file) {
       Serial.println("Failed to open file for writing");
       return;
@@ -206,9 +220,7 @@ void firmwareUpdate(void) {
     Serial.println("Error Occurred:" + String(Update.getError()));
     return;
   }
-
   file.close();  // Close the file
-  SD.remove("/" + String(FILE_NAME)); // delete firmware file
 
   // save firmware version for later update
   fileFW = SD.open("/firmwareVersion.txt", FILE_WRITE);
@@ -528,6 +540,8 @@ void handleSubmit() {
   writeFile(SPIFFS, usernamePath, mqtt_user.c_str());
   writeFile(SPIFFS, passwordPath, mqtt_password.c_str());
   writeFile(SPIFFS, intervalPath, String(interval).c_str());
+  writeFile(SPIFFS, logIntervalPath, String(logInterval).c_str());
+
   WiFi.begin(SSID, password);
   delay(2000);
   Serial.println("connect to " + SSID);
@@ -582,6 +596,10 @@ void setupWifi() {
   mqtt_user = readFile(SPIFFS, usernamePath, mqtt_user);
   mqtt_password = readFile(SPIFFS, passwordPath, mqtt_password);
   interval = readFile(SPIFFS, intervalPath, String(interval)).toInt();
+  logInterval = readFile(SPIFFS, logIntervalPath, String(logInterval)).toInt();
+
+  Serial.println("MQTT Message Interval: " + interval);
+  Serial.println("Data Log Interval: " + logInterval);
 
   if (SSID == "") {
     setupWifiAP();
@@ -626,18 +644,85 @@ void setupWifi() {
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 }
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived on topic: ");
+  Serial.print(topic);
+  Serial.print(". Message: ");
 
+  String receivedMessage;
+
+  for (int i = 0; i < length; i++) {
+    receivedMessage += (char)payload[i];
+  }
+
+  Serial.println(receivedMessage);
+
+
+  if (String(topic) == msgConfIntervalTopic) {
+    Serial.print("Message arrived on topic: ");
+    Serial.print(topic);
+    Serial.print(". Message: ");
+    String messageTemp;
+    for (int i = 0; i < length; i++) {
+      Serial.print((char)payload[i]);
+      messageTemp += (char)payload[i];
+    }
+    Serial.println();
+    String data = "{\"deivceId\": \"" + String(mqttID) + "\",\"interval\": " + messageTemp + "}";
+    client.publish(msgConfReplyTopic.c_str(), data.c_str());
+    interval = messageTemp.toInt();
+    writeFile(SPIFFS, intervalPath, messageTemp.c_str());
+    Serial.println("Setting Message Transmission Inerval to :" + String(interval) + "ms");
+  }
+  if (String(topic) == msgconfLogInervalTopic) {
+    Serial.print("Message arrived on topic: ");
+    Serial.print(topic);
+    Serial.print(". Message: ");
+    String messageTemp;
+    for (int i = 0; i < length; i++) {
+      Serial.print((char)payload[i]);
+      messageTemp += (char)payload[i];
+    }
+    Serial.println();
+    String data = "{\"deivceId\": \"" + String(mqttID) + "\",\"interval\": " + messageTemp + "}";
+    client.publish(msgConfReplyTopic.c_str(), data.c_str());
+    logInterval = messageTemp.toInt();
+    Serial.print("Set data log interval to: " + String(logInterval) + "ms");
+    writeFile(SPIFFS, logIntervalPath, messageTemp.c_str());
+  }
+
+  if (String(topic) == msgConfEspResetTopic) {
+    Serial.print("Message arrived on topic: ");
+    Serial.print(topic);
+    Serial.print(". Message: ");
+    String messageTemp;
+    for (int i = 0; i < length; i++) {
+      Serial.print((char)payload[i]);
+      messageTemp += (char)payload[i];
+    }
+    if (messageTemp == "ok") {
+      String data = "{\"deivceId\": \"" + String(mqttID) + "\",\"interval\": " + messageTemp + "}";
+      client.publish(msgConfReplyTopic.c_str(), data.c_str());
+      delay(4000);
+      ESP.restart();
+    }
+  }
+}
 void setupMqtt() {
   // espClient.setInsecure();
   // espClient.stop();
   client.setServer(server.c_str(), port.toInt());
   client.setKeepAlive(60);
-  // client.setCallback(callback);
+  client.setCallback(callback);
   strcpy(mqttTopic, topic.c_str());
   // Attempt to connect
   Serial.println("Attempting MQTT connection...");
   if (client.connect(mqttID, mqtt_user.c_str(), mqtt_password.c_str())) {
     Serial.println("MQTT connected");
+    client.subscribe(msgConfIntervalTopic.c_str());
+    client.subscribe(msgconfLogInervalTopic.c_str());
+    client.subscribe(msgConfReplyTopic.c_str());
+    client.subscribe(msgConfEspResetTopic.c_str());
   } else {
     Serial.print("MQTT connection failed, rc=");
     Serial.print(client.state());
@@ -645,35 +730,65 @@ void setupMqtt() {
     delay(3000);  // Wait before retrying
   }
 }
-
+// reconnect to mqtt
+void reconnectMqtt() {
+  // Loop until we're reconnected
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect
+    if (client.connect(mqttID, mqtt_user.c_str(), mqtt_password.c_str())) {
+      Serial.println("connected");
+      // Once connected, subscribe to the topic
+      client.subscribe(msgConfIntervalTopic.c_str());
+      client.subscribe(msgconfLogInervalTopic.c_str());
+      client.subscribe(msgConfReplyTopic.c_str());
+      client.subscribe(msgConfEspResetTopic.c_str());
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
+      delay(5000);
+    }
+  }
+}
 // Function to sync RTC with NTP time
 void syncTimeWithNTP() {
   Wire.begin(33, 32);
-  configTime(7 * 3600, 0, "pool.ntp.org");
+  configTime(7 * 3600, 0, "pool.ntp.org");  // Adjust the time zone offset (7 * 3600 for UTC+7)
   struct tm timeinfo;
   if (!getLocalTime(&timeinfo)) {
     Serial.println("Failed to obtain time");
     return;
   }
 
-  // Convert struct tm to time_t
+  // Convert struct tm to time_t (Unix time)
   time_t now = mktime(&timeinfo);
 
   // Set the RTC time using time_t
   if (RTC.set(now)) {
     Serial.println("RTC time set successfully.");
   } else {
-    // Serial.println("Failed to set RTC time.");
+    Serial.println("Failed to set RTC time.");
   }
 }
 
 // Function to get current time from RTC
-String getDateTime() {
+time_t getDateTime() {
   tmElements_t tm;
   RTC.read(tm);  // Read the time from the RTC
-  char datetime[20];
-  sprintf(datetime, "%04d-%02d-%02d %02d:%02d:%02d", tm.Year + 1970, tm.Month, tm.Day, tm.Hour + 7, tm.Minute, tm.Second);
-  return String(datetime);
+
+  // Create a struct tm with the values from the RTC
+  struct tm rtcTime;
+  rtcTime.tm_year = tm.Year + 1970 - 1900;  // Adjust year for struct tm (since 1900)
+  rtcTime.tm_mon = tm.Month - 1;            // Adjust month (0-11 for struct tm)
+  rtcTime.tm_mday = tm.Day;
+  rtcTime.tm_hour = tm.Hour;  // No need to adjust time zone here
+  rtcTime.tm_min = tm.Minute;
+  rtcTime.tm_sec = tm.Second;
+
+  // Convert struct tm to time_t (Unix time)
+  return mktime(&rtcTime);
 }
 
 // Function to generate random sensor data with names
@@ -721,7 +836,7 @@ String getSensorData() {
   } else {
     data += "0.00";
   }
-  data += ",\"timestamp\":" + getDateTime() + "}] }}";
+  data += ",\"timestamp\":" + String(getDateTime()) + "}] }}";
 
   return data;
 }
@@ -814,24 +929,17 @@ void TaskSendData(void* pvParameters) {
   for (;;) {
 
     if (WiFi.status() == WL_CONNECTED && client.connected()) {
-      sendDataToMQTT();
-
+      if (millis() - lastMsgInterval >= interval) {
+        lastMsgInterval = millis();
+        sendDataToMQTT();
+      }
     } else {
       vTaskDelay(500);
       Serial.println("MQTT disconnected, retrying...");
-      if (!client.connected()) {
-        for (int retry = 0; retry < 5 && !client.connected(); retry++) {  // Limit retries
-          if (client.connect(mqttID, mqtt_user.c_str(), mqtt_password.c_str())) {
-            Serial.println("MQTT reconnected.");
-          } else {
-            Serial.println("MQTT connection failed, retrying...");
-            vTaskDelay(2000 / portTICK_PERIOD_MS);  // Wait before retrying
-          }
-        }
-      }
-      client.loop();
+      reconnectMqtt();
     }
-    vTaskDelay(50 / portTICK_PERIOD_MS);  // Check every 10ms
+    client.loop();
+    vTaskDelay(100 / portTICK_PERIOD_MS);  // Check every 10ms
   }
 }
 
@@ -846,6 +954,8 @@ void TaskUpdateTime(void* pvParameters) {
     vTaskDelay(xDelay);
   }
 }
+
+
 void IRAM_ATTR handleButtonPress() {
   // Interrupt is triggered when the button is pressed (active low)
   if (digitalRead(resetWiFiPin) == LOW) {
@@ -895,14 +1005,13 @@ void setup() {
 
   // remove firmware file before write new firmware
   delay(100);
-  SD.remove("/" + String(FILE_NAME));
 
   // Create a mutex to protect SD card access
   sdMutex = xSemaphoreCreateMutex();
 
   // Create tasks
   xTaskCreatePinnedToCore(TaskLogData, "TaskLogData", 4096, NULL, 1, &Task1, 1);
-  xTaskCreatePinnedToCore(TaskSendData, "TaskSendData", 4096, NULL, 1, &Task2, 0);
+  xTaskCreatePinnedToCore(TaskSendData, "TaskSendData", 8192, NULL, 1, &Task2, 0);
   xTaskCreatePinnedToCore(TaskUpdateTime, "TaskUpdateTime", 4096, NULL, 1, &task3, 0);
 }
 
